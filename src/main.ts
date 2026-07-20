@@ -5,18 +5,16 @@ import { TrayManager } from './tray'
 import { logger } from './logger'
 
 // ---------------------------------------------------------------------------
-// 单实例锁
+// 全局状态
 // ---------------------------------------------------------------------------
+
+let isQuitting = false
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   logger.info('已有实例运行，退出')
   app.quit()
 }
-
-// ---------------------------------------------------------------------------
-// 全局状态
-// ---------------------------------------------------------------------------
 
 let mainWindow: BrowserWindow | null = null
 let snowlumaManager: SnowlumaManager
@@ -50,7 +48,7 @@ function createWindow() {
 
   // 窗口关闭时隐藏而非退出（托盘程序）
   mainWindow.on('close', (event) => {
-    if (!app.isQuitting) {
+    if (!isQuitting) {
       event.preventDefault()
       mainWindow?.hide()
     }
@@ -116,15 +114,8 @@ function registerShortcuts() {
 // 入口
 // ---------------------------------------------------------------------------
 
-// 扩展 Event 上添加 isQuitting 标志
-declare module 'electron' {
-  interface App {
-    isQuitting?: boolean
-  }
-}
-
 app.on('before-quit', () => {
-  app.isQuitting = true
+  isQuitting = true
 })
 
 app.on('second-instance', () => {
