@@ -1,0 +1,51 @@
+{
+  "name": "snowluma-tray",
+  "version": "1.0.0",
+  "description": "SnowLuma 系统托盘管理器",
+  "main": "dist/main.js",
+  "author": "",
+  "license": "MIT",
+  "scripts": {
+    "dev": "tsc && electron .",
+    "build": "tsc",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "electron-log": "^5.1.5",
+    "electron-updater": "^6.1.8"
+  },
+  "build": {
+    "appId": "com.snowluma.tray",
+    "productName": "SnowLuma托盘",
+    "directories": {
+      "output": "../dist"
+    },
+    "files": [
+      "dist/**/*",
+      "assets/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "SnowLumaTray.exe"
+    },
+    "extraMetadata": {
+      "main": "dist/main.js"
+    }
+  }
+}
