@@ -6,6 +6,22 @@ import { app, Notification } from 'electron'
 import { logger } from './logger'
 
 // ---------------------------------------------------------------------------
+// SnowLuma 版本读取
+// ----------------------------------------------------------------------------
+
+/** 读取 SnowLuma 目录下的 package.json 获取版本 */
+function readSnowlumaVersion(snowlumaDir: string): string {
+  try {
+    const pkgPath = path.join(snowlumaDir, 'package.json')
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
+      return pkg.version ?? '未知'
+    }
+  } catch { /* ignore */ }
+  return '未知'
+}
+
+// ---------------------------------------------------------------------------
 // 目录自动检测 + 用户配置持久化
 // ---------------------------------------------------------------------------
 
@@ -87,6 +103,7 @@ export class SnowlumaManager extends EventEmitter {
   private snowlumaDir: string | null = null
   private stdoutBuffer = ''
   private stderrBuffer = ''
+  private _snowlumaVersion: string = '未知'
 
   get state(): SnowlumaState {
     return this._state
@@ -94,6 +111,10 @@ export class SnowlumaManager extends EventEmitter {
 
   get snowlumaProcess(): ChildProcess | null {
     return this.process
+  }
+
+  get snowlumaVersion(): string {
+    return this._snowlumaVersion
   }
 
   // ---------------------------------------------------------------------------
@@ -118,12 +139,14 @@ export class SnowlumaManager extends EventEmitter {
     const config = loadConfig()
     if (config.snowlumaDir && isValidSnowlumaDir(config.snowlumaDir)) {
       this.snowlumaDir = config.snowlumaDir
+      this._snowlumaVersion = readSnowlumaVersion(this.snowlumaDir)
       return this.snowlumaDir
     }
 
     const detected = detectSnowlumaDir()
     if (detected) {
       this.snowlumaDir = detected
+      this._snowlumaVersion = readSnowlumaVersion(detected)
       saveConfig(detected)
       return detected
     }
@@ -143,6 +166,7 @@ export class SnowlumaManager extends EventEmitter {
       return false
     }
     this.snowlumaDir = dir
+    this._snowlumaVersion = readSnowlumaVersion(dir)
     saveConfig(dir)
     logger.info(`目录已设置为: ${dir}`)
     return true

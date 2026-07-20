@@ -1,4 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, globalShortcut } from 'electron'
+import { autoUpdater } from 'electron-updater'
+import log from 'electron-log'
 import path from 'node:path'
 import { SnowlumaManager } from './snowluma-manager'
 import { TrayManager } from './tray'
@@ -146,6 +148,9 @@ app.whenReady().then(() => {
   if (mainWindow) {
     trayManager.create(mainWindow)
   }
+
+  // 初始化 OTA 自动更新（仅设置 logger，不自动检查）
+  autoUpdater.logger = log
 
   // 自动检测并启动 SnowLuma
   setTimeout(() => {

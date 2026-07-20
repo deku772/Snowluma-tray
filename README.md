@@ -1,131 +1,113 @@
-# SnowLumaTray
+# SnowLuma Tray
 
-> SnowLuma 系统托盘管理器 — 为 [SnowLuma](https://github.com/SnowLuma/SnowLuma) 提供 Windows 系统托盘、常驻后台、崩溃自恢复能力。
+为 [SnowLuma](https://github.com/SnowLuma/SnowLuma) 打造的托盘管理工具，基于 Electron + TypeScript 开发。
 
-## 概述
+## 功能特性
 
-SnowLuma 本身是无窗口的 Node.js CLI 服务，需配合终端使用。SnowLumaTray 将其包装为 Windows 托盘应用，实现：
+- **托盘管理**：最小化到系统托盘，一目了然运行状态
+- **自动重启**：SnowLuma 意外退出后 5 秒自动恢复（最多 10 次）
+- **多实例防护**：单例运行，避免重复启动
+- **WebUI 快速访问**：双击托盘图标直接打开 `http://localhost:5099`
+- **全局快捷键**：`Ctrl+Shift+S` 打开/隐藏主窗口
+- **OTA 更新**：支持从 GitHub Releases 自动检查更新
+- **版本显示**：菜单和 tooltip 同时显示托盘版和 SnowLuma 版
 
-- 🔔 **系统托盘图标** — 状态一目了然
-- 🔄 **崩溃自恢复** — 意外退出 5 秒后自动重启（最多 10 次）
-- 🖥️ **隐藏后台运行** — 无窗口、无控制台，纯后台进程
-- ⌨️ **全局快捷键** — `Ctrl+Shift+S` 显示/隐藏主窗口
-- 📂 **一键操作** — 启动/停止/重启/查看日志/打开 WebUI
+## 运行效果
 
-## 快速开始
-
-### 下载使用（推荐）
-
-1. 下载最新的 `SnowLumaTray.exe`
-2. 将其放到 **SnowLuma 目录**（即 `index.mjs` 和 `node.exe` 所在目录），或放到任意目录
-3. 双击运行，托盘图标出现即表示启动成功
-
-> 如果找不到 SnowLuma，首次启动会弹出目录选择框，选择后自动记住路径。
-
-### 从源码构建
-
-```bash
-# 克隆本仓库
-git clone https://github.com/deku772/Snowluma-tray.git
-cd Snowluma-tray/src
-
-# 安装依赖
-npm install
-
-# 开发调试
-npm run dev
-
-# 构建便携版 exe
-npm run dist
+```
+🆔 SnowLuma  v1.12.6  ✅ 运行中
+  托盘版本: v1.0.0
+  SnowLuma: v1.12.6
+  目录: D:\snowluma
+━━━━━━━━━━━━━━━━━━━━━━
+🌐 打开 WebUI
+🔄 重启 SnowLuma
+⏹️ 停止 SnowLuma
+📥 检查更新
+📁 打开 SnowLuma 目录
+📁 打开日志目录
+👁️ 显示窗口
+❌ 退出
 ```
 
-构建产物位于 `dist/SnowLumaTray.exe`。
+## 使用说明
 
-## 项目结构
+### 前提
+
+- 已安装 [SnowLuma](https://github.com/SnowLuma/SnowLuma)（版本 ≥ 1.12.6）
+- SnowLuma 解压目录，例如 `D:\snowluma`
+
+### 运行
+
+下载 `SnowLumaTray.exe`（便携版，无需安装），直接运行即可。
+
+首次运行会自动检测 SnowLuma 目录，若未找到会弹出目录选择窗口。
+
+### 修改 WebUI 密码
+
+首次运行 SnowLuma 会生成随机初始密码。修改密码：
+
+```bash
+python assets/reset_password.py <新密码>
+# 例如：
+python assets/reset_password.py QQCqqc123
+```
+
+> **注意**：SnowLuma 使用 scrypt 哈希密码，请勿使用其他哈希算法（如 PBKDF2）生成的 hash。
+
+修改后重启 SnowLumaTray 使配置生效。
+
+### 快捷操作
+
+| 操作 | 方式 |
+|------|------|
+| 打开 WebUI | 双击托盘图标 或 右键菜单「打开 WebUI」 |
+| 切换窗口 | `Ctrl+Shift+S` 或 右键菜单「显示/隐藏窗口」 |
+| 重启 SnowLuma | 右键菜单「重启 SnowLuma」 |
+| 退出程序 | 右键菜单「退出」 |
+
+## 目录结构
 
 ```
 SnowLumaTray/
 ├── src/
-│   ├── assets/             # 托盘图标（PNG）
-│   ├── main.ts             # Electron 主进程入口
-│   ├── tray.ts             # 系统托盘模块
-│   ├── snowluma-manager.ts # SnowLuma 子进程管理器
-│   ├── logger.ts           # 日志模块（electron-log）
-│   ├── preload.ts          # IPC bridge（预留扩展）
-│   ├── package.json        # 项目配置 + electron-builder
-│   └── tsconfig.json       # TypeScript 配置
-├── assets/
-│   ├── icon.png            # 托盘图标源文件
-│   └── make_icon.py        # 图标生成脚本（Python PIL）
-├── dist/                   # 构建产物（gitignore）
-│   └── SnowLumaTray.exe
+│   ├── main.ts              # Electron 主进程
+│   ├── preload.ts           # IPC 预加载
+│   ├── tray.ts              # 托盘 UI 管理
+│   ├── snowluma-manager.ts  # SnowLuma 子进程管理
+│   ├── logger.ts            # 日志模块（electron-log）
+│   ├── assets/
+│   │   ├── icon.png         # 托盘图标
+│   │   └── reset_password.py # WebUI 密码重置工具
+│   ├── package.json
+│   └── tsconfig.json
+├── dist/
+│   └── SnowLumaTray.exe     # 打包产物（68 MB）
 └── README.md
 ```
 
-## 功能详情
+## 开发
 
-### 系统托盘
-
-| 菜单项 | 说明 |
-|--------|------|
-| 🌐 打开 WebUI | 浏览器访问 `http://localhost:5099` |
-| 🔄 重启 SnowLuma | 平滑重启子进程（自动停止后启动） |
-| ▶️ 启动 SnowLuma | 手动启动（子进程已停止时可用） |
-| ⏹️ 停止 SnowLuma | 手动停止子进程 |
-| 📥 检查更新 | 预留功能（待实现） |
-| 📁 打开日志目录 | 直接打开 `SnowLuma目录/logs` |
-| ❌ 退出 | 关闭托盘并停止 SnowLuma |
-
-### 托盘图标状态
-
-| 状态 | 说明 |
-|------|------|
-| ❌ 已停止 | SnowLuma 子进程未运行 |
-| 🔄 启动中... | 正在启动 |
-| ✅ 运行中 | 正常工作中 |
-| ⏳ 停止中... | 正在关闭 |
-| ⚠️ 异常 | 子进程退出码非零 |
-
-### 崩溃自恢复
-
-当 SnowLuma 子进程意外退出（非主动停止），托盘管理器会在 **5 秒后**自动重启。如果反复崩溃（超过 10 次），停止自动恢复。
-
-### 目录自动检测
-
-首次启动时自动搜索以下位置：
-
-1. `SnowLumaTray.exe` 同级目录
-2. `D:\snowluma`
-3. `C:\snowluma`
-4. 用户主目录下的 `snowluma`
-5. 如果都找不到，弹出窗口让用户手动选择
-
-配置路径保存在 `%APPDATA%\snowluma-tray\config.json`。
-
-## 配置
-
-配置文件位于 `%APPDATA%\snowluma-tray/config.json`：
-
-```json
-{
-  "snowlumaDir": "D:\\snowluma"
-}
+```bash
+cd src
+npm install
+npm run dev    # 开发模式（热重载）
+npm run build  # 构建
 ```
 
-日志文件位于 `%APPDATA%\snowluma-tray/logs/`。
+## 构建发布包
 
-## 技术栈
+```bash
+cd src
+npm run dist
+```
 
-- **Electron** ^31 — 跨平台桌面应用框架
-- **electron-log** ^5 — 日志记录
-- **electron-builder** ^24 — 打包为单文件 exe
-- **TypeScript** ^5 — 类型安全
+产物位于 `dist/SnowLumaTray.exe`（便携版）。
 
-## 与上级仓库的关系
+## 相关项目
 
-本项目为 [SnowLuma](https://github.com/SnowLuma/SnowLuma) 的衍生工具，不修改上游源码，独立构建、独立发布。
-
-> SnowLuma 是一个基于 OneBot 协议的 QQ 机器人框架，支持 HTTP/WebSocket 适配器，提供 WebUI 管理界面。
+- [SnowLuma](https://github.com/SnowLuma/SnowLuma) — QQ 机器人框架（上游）
+- [LuckyLilliaBot](https://github.com/deku772/LuckyLilliaBot) — 基于 Cordis 的 QQ 机器人
 
 ## License
 

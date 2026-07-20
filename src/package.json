@@ -44,6 +44,11 @@
     "portable": {
       "artifactName": "SnowLumaTray.exe"
     },
+    "publish": {
+      "provider": "github",
+      "owner": "deku772",
+      "repo": "Snowluma-tray"
+    },
     "extraMetadata": {
       "main": "dist/main.js"
     }
