@@ -9,7 +9,8 @@
     "dev": "tsc && electron .",
     "build": "tsc",
     "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder && node generate-latest-yml.js",
+    "release": "npm run dist"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
