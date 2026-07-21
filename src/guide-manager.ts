@@ -357,7 +357,8 @@ export class GuideManager {
     })
 
     // 加载引导页面
-    const htmlPath = path.join(__dirname, 'guide.html')
+    // __dirname 指向 dist/ 目录，guide.html 在 src/ 目录
+    const htmlPath = path.join(__dirname, '..', 'guide.html')
     logger.info('加载引导页面:', htmlPath)
     this.window.loadFile(htmlPath)
 
