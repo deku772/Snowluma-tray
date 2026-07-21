@@ -23,27 +23,12 @@ export class TrayManager {
   private trayAppVersion = app.getVersion()
   private snowlumaUpdateAvailable = false
   private snowlumaUpdateVersion = ''
-  private proxy: string | undefined
+  private lastCheckResult?: { hasUpdate: boolean; latestVersion: string; downloadUrl?: string; releaseNotes?: string }
 
   constructor(snowlumaManager: SnowlumaManager) {
     this.snowlumaManager = snowlumaManager
     this.snowlumaUpdater = new SnowlumaUpdater(snowlumaManager)
-    this.loadProxyConfig()
     this.setupSnowlumaUpdater()
-  }
-
-  // ---------------------------------------------------------------------------
-  // 代理配置
-  // ---------------------------------------------------------------------------
-
-  private loadProxyConfig() {
-    try {
-      const configPath = path.join(app.getPath('userData'), 'config.json')
-      if (fs.existsSync(configPath)) {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-        this.proxy = config.proxy
-      }
-    } catch { /* ignore */ }
   }
 
   // ---------------------------------------------------------------------------
@@ -107,6 +92,7 @@ export class TrayManager {
     const snowlumaVer = lm.snowlumaVersion
     const snowlumaDir = lm.getCurrentDir() ?? ''
     const updaterState = this.snowlumaUpdater.state
+    const updaterError = this.snowlumaUpdater.error
 
     const stateLabel: Record<SnowlumaState, string> = {
       stopped: '❌ 已停止',
@@ -122,7 +108,7 @@ export class TrayManager {
       downloading: '⬇️ 下载中...',
       extracting: '📦 解压中...',
       installing: '⚙️ 安装中...',
-      error: '❌ 更新失败',
+      error: `❌ 更新失败（点击重试）`,
     }
 
     const contextMenu = Menu.buildFromTemplate([
@@ -173,15 +159,19 @@ export class TrayManager {
       // SnowLuma OTA 更新
       {
         label: updaterLabel[updaterState] || '📥 检查更新',
-        enabled: updaterState === 'idle',
-        click: () => this.checkSnowlumaUpdates(),
+        enabled: updaterState === 'idle' || updaterState === 'error',
+        click: () => {
+          if (updaterState === 'error') {
+            this.snowlumaUpdater.reset()
+          }
+          this.checkSnowlumaUpdates()
+        },
       },
 
-      // 代理设置
-      {
-        label: this.proxy ? '🔧 设置代理 (当前: 已设置)' : '🔧 设置代理',
-        click: () => this.showProxyDialog(),
-      },
+      // 显示错误详情
+      ...(updaterState === 'error' && updaterError ? [
+        { label: `  错误: ${updaterError.slice(0, 50)}${updaterError.length > 50 ? '...' : ''}`, enabled: false }
+      ] : []),
 
       { type: 'separator' },
 
@@ -278,6 +268,7 @@ export class TrayManager {
   /** 检查 SnowLuma 更新 */
   async checkSnowlumaUpdates() {
     const result = await this.snowlumaUpdater.checkForUpdate()
+    this.lastCheckResult = result
 
     if (result.hasUpdate && result.downloadUrl) {
       this.snowlumaUpdateAvailable = true
@@ -300,40 +291,14 @@ export class TrayManager {
         await this.snowlumaUpdater.downloadAndInstall(result.downloadUrl)
       }
     } else if (!result.hasUpdate) {
-      this.notify('已是最新', `SnowLuma v${result.currentVersion} 无需更新`)
-    } else {
-      this.notify('检查失败', '无法获取更新信息，请检查网络连接')
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // 代理设置
-  // ---------------------------------------------------------------------------
-
-  private showProxyDialog() {
-    const currentProxy = this.proxy || ''
-
-    // 使用简单的输入对话框（通过 Electron prompt 或自定义窗口）
-    // 这里简化为设置固定代理 127.0.0.1:7890
-    const choice = dialog.showMessageBoxSync(this.mainWindow!, {
-      type: 'question',
-      buttons: ['设置 127.0.0.1:7890', '清除代理', '取消'],
-      defaultId: 0,
-      title: '代理设置',
-      message: '当前代理: ' + (currentProxy || '未设置'),
-      detail: '设置代理以访问 GitHub（国内网络需要）',
-    })
-
-    if (choice === 0) {
-      this.proxy = 'http://127.0.0.1:7890'
-      this.snowlumaUpdater.setProxy(this.proxy)
-      this.buildMenu()
-      this.notify('代理已设置', '127.0.0.1:7890')
-    } else if (choice === 1) {
-      this.proxy = undefined
-      this.snowlumaUpdater.setProxy(undefined)
-      this.buildMenu()
-      this.notify('代理已清除', '将使用直连')
+      if (result.latestVersion === result.currentVersion) {
+        this.notify('已是最新', `SnowLuma v${result.currentVersion} 无需更新`)
+      } else {
+        // 当前版本较新（可能是开发版）
+        this.notify('无需更新', `当前版本 ${result.currentVersion} 已是最新`)
+      }
+    } else if (result.error) {
+      this.notify('检查失败', result.error)
     }
   }
 

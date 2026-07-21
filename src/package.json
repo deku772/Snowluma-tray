@@ -8,9 +8,10 @@
   "scripts": {
     "dev": "tsc && electron .",
     "build": "tsc",
+    "clean": "node -e \"const fs=require('fs');const p='../dist/win-unpacked';if(fs.existsSync(p))fs.rmSync(p,{recursive:true});\"",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder && node generate-latest-yml.js",
-    "release": "npm run dist"
+    "release": "npm run clean && npm run dist"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

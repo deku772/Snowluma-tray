@@ -1,5 +1,3 @@
-import https from 'node:https'
-import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
@@ -30,163 +28,28 @@ interface UpdateCheckResult {
   latestVersion: string
   downloadUrl?: string
   releaseNotes?: string
+  error?: string
 }
 
 type UpdateState = 'idle' | 'checking' | 'downloading' | 'extracting' | 'installing' | 'error'
 
 // ---------------------------------------------------------------------------
-// HTTP 请求（支持代理）
+// 版本对比（简化版 semver）
 // ---------------------------------------------------------------------------
 
-function httpGet(url: string, proxy?: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const parsedUrl = new URL(url)
-    const isHttps = parsedUrl.protocol === 'https:'
-
-    // 如果有代理，通过代理发送请求
-    if (proxy) {
-      const proxyUrl = new URL(proxy)
-      const proxyReq = http.request({
-        host: proxyUrl.hostname,
-        port: proxyUrl.port || 7890,
-        method: 'CONNECT',
-        path: `${parsedUrl.hostname}:443`,
-      })
-
-      proxyReq.on('connect', (res, socket) => {
-        if (res.statusCode === 200) {
-          const tlsSocket = require('tls').connect({
-            socket,
-            servername: parsedUrl.hostname,
-          }, () => {
-            const req = `GET ${parsedUrl.pathname} HTTP/1.1\r\nHost: ${parsedUrl.hostname}\r\nConnection: close\r\n\r\n`
-            tlsSocket.write(req)
-          })
-
-          let data = ''
-          tlsSocket.on('data', (chunk: Buffer) => { data += chunk })
-          tlsSocket.on('end', () => {
-            // 解析 HTTP 响应，提取 body
-            const bodyStart = data.indexOf('\r\n\r\n')
-            if (bodyStart !== -1) {
-              resolve(data.slice(bodyStart + 4))
-            } else {
-              reject(new Error('Invalid HTTP response'))
-            }
-          })
-          tlsSocket.on('error', reject)
-        } else {
-          reject(new Error(`Proxy CONNECT failed: ${res.statusCode}`))
-        }
-      })
-
-      proxyReq.on('error', reject)
-      proxyReq.end()
-      return
-    }
-
-    // 无代理，直接请求
-    const client = isHttps ? https : http
-    const req = client.get(url, (res) => {
-      let data = ''
-      res.on('data', (chunk) => { data += chunk })
-      res.on('end', () => resolve(data))
-    })
-    req.on('error', reject)
-    req.end()
-  })
-}
-
-// ---------------------------------------------------------------------------
-// 文件下载（支持代理）
-// ---------------------------------------------------------------------------
-
-function downloadFile(url: string, destPath: string, proxy?: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const parsedUrl = new URL(url)
-    const isHttps = parsedUrl.protocol === 'https:'
-
-    if (proxy) {
-      const proxyUrl = new URL(proxy)
-      const proxyReq = http.request({
-        host: proxyUrl.hostname,
-        port: proxyUrl.port || 7890,
-        method: 'CONNECT',
-        path: `${parsedUrl.hostname}:443`,
-      })
-
-      proxyReq.on('connect', (res, socket) => {
-        if (res.statusCode === 200) {
-          const tlsSocket = require('tls').connect({
-            socket,
-            servername: parsedUrl.hostname,
-          }, () => {
-            const req = `GET ${parsedUrl.pathname} HTTP/1.1\r\nHost: ${parsedUrl.hostname}\r\nConnection: close\r\n\r\n`
-            tlsSocket.write(req)
-          })
-
-          const file = fs.createWriteStream(destPath)
-          let headersDone = false
-
-          tlsSocket.on('data', (chunk: Buffer) => {
-            if (!headersDone) {
-              // 跳过 HTTP 头
-              const data = chunk.toString()
-              const headerEnd = data.indexOf('\r\n\r\n')
-              if (headerEnd !== -1) {
-                headersDone = true
-                const body = chunk.slice(headerEnd + 4)
-                file.write(body)
-              }
-            } else {
-              file.write(chunk)
-            }
-          })
-
-          tlsSocket.on('end', () => {
-            file.end()
-            resolve()
-          })
-
-          tlsSocket.on('error', (err: Error) => {
-            file.destroy()
-            fs.unlinkSync(destPath)
-            reject(err)
-          })
-        } else {
-          reject(new Error(`Proxy CONNECT failed: ${res.statusCode}`))
-        }
-      })
-
-      proxyReq.on('error', reject)
-      proxyReq.end()
-      return
-    }
-
-    // 无代理
-    const client = isHttps ? https : http
-    const file = fs.createWriteStream(destPath)
-    const req = client.get(url, (res) => {
-      if (res.statusCode === 302 || res.statusCode === 301) {
-        // 跟随重定向
-        file.close()
-        fs.unlinkSync(destPath)
-        downloadFile(res.headers.location!, destPath, proxy).then(resolve).catch(reject)
-        return
-      }
-      res.pipe(file)
-      file.on('finish', () => {
-        file.close()
-        resolve()
-      })
-    })
-    req.on('error', (err) => {
-      file.destroy()
-      fs.unlinkSync(destPath)
-      reject(err)
-    })
-    req.end()
-  })
+function compareVersions(a: string, b: string): number {
+  const parse = (v: string) => {
+    const [core = ''] = v.replace(/^v/, '').split('-', 2)
+    const nums = core.split('.').map((n) => parseInt(n, 10) || 0)
+    while (nums.length < 3) nums.push(0)
+    return nums
+  }
+  const pa = parse(a)
+  const pb = parse(b)
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] !== pb[i]) return pa[i] - pb[i]
+  }
+  return 0
 }
 
 // ---------------------------------------------------------------------------
@@ -196,49 +59,22 @@ function downloadFile(url: string, destPath: string, proxy?: string): Promise<vo
 export class SnowlumaUpdater extends EventEmitter {
   private manager: SnowlumaManager
   private _state: UpdateState = 'idle'
-  private proxy?: string
   private tempDir: string
   private currentVersion: string = '0.0.0'
+  private lastError?: string
 
   constructor(manager: SnowlumaManager) {
     super()
     this.manager = manager
     this.tempDir = path.join(app.getPath('temp'), 'snowluma-update')
-    this.loadProxyConfig()
   }
 
   get state(): UpdateState {
     return this._state
   }
 
-  // ---------------------------------------------------------------------------
-  // 代理配置
-  // ---------------------------------------------------------------------------
-
-  private loadProxyConfig() {
-    try {
-      const configPath = path.join(app.getPath('userData'), 'config.json')
-      if (fs.existsSync(configPath)) {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-        this.proxy = config.proxy
-      }
-    } catch { /* ignore */ }
-  }
-
-  setProxy(proxy: string | undefined) {
-    this.proxy = proxy
-    // 保存到配置
-    try {
-      const configPath = path.join(app.getPath('userData'), 'config.json')
-      const config = fs.existsSync(configPath)
-        ? JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-        : {}
-      config.proxy = proxy
-      fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
-      logger.info(`代理配置已更新: ${proxy || '无'}`)
-    } catch (e) {
-      logger.error('保存代理配置失败:', e)
-    }
+  get error(): string | undefined {
+    return this.lastError
   }
 
   // ---------------------------------------------------------------------------
@@ -247,14 +83,16 @@ export class SnowlumaUpdater extends EventEmitter {
 
   async checkForUpdate(): Promise<UpdateCheckResult> {
     this._state = 'checking'
+    this.lastError = undefined
     this.emit('stateChanged', this._state)
     logger.info('正在检查 SnowLuma 更新...')
 
     const dir = this.manager.getCurrentDir()
     if (!dir) {
       this._state = 'error'
+      this.lastError = 'SnowLuma 目录未设置'
       this.emit('stateChanged', this._state)
-      return { hasUpdate: false, currentVersion: '未知', latestVersion: '未知' }
+      return { hasUpdate: false, currentVersion: '未知', latestVersion: '未知', error: this.lastError }
     }
 
     // 读取当前版本
@@ -262,18 +100,32 @@ export class SnowlumaUpdater extends EventEmitter {
       const pkgPath = path.join(dir, 'package.json')
       const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
       this.currentVersion = pkg.version || '0.0.0'
-    } catch {
+      logger.info(`当前版本: ${this.currentVersion}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
       this._state = 'error'
+      this.lastError = `读取版本失败: ${msg}`
       this.emit('stateChanged', this._state)
-      return { hasUpdate: false, currentVersion: '未知', latestVersion: '未知' }
+      return { hasUpdate: false, currentVersion: '未知', latestVersion: '未知', error: this.lastError }
     }
 
     // 获取 GitHub 最新 Release
     try {
       const apiUrl = 'https://api.github.com/repos/SnowLuma/SnowLuma/releases/latest'
-      const jsonStr = await httpGet(apiUrl, this.proxy)
-      const release: GitHubRelease = JSON.parse(jsonStr)
+      const res = await fetch(apiUrl, {
+        headers: {
+          'Accept': 'application/vnd.github+json',
+          'User-Agent': 'SnowLuma-Tray/1.1.0',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        signal: AbortSignal.timeout(15000),
+      })
 
+      if (!res.ok) {
+        throw new Error(`GitHub API 错误: ${res.status} ${res.statusText}`)
+      }
+
+      const release: GitHubRelease = await res.json()
       const latestVersion = release.tag_name.replace(/^v/, '')
 
       // 找到 Windows x64 完整版 zip
@@ -281,15 +133,18 @@ export class SnowlumaUpdater extends EventEmitter {
         a.name.includes('win-x64') && !a.name.includes('lite') && a.name.endsWith('.zip')
       )
 
+      const hasUpdate = compareVersions(latestVersion, this.currentVersion) > 0
+
       const result: UpdateCheckResult = {
-        hasUpdate: latestVersion !== this.currentVersion,
+        hasUpdate,
         currentVersion: this.currentVersion,
         latestVersion,
         downloadUrl: asset?.browser_download_url,
-        releaseNotes: release.body,
+        releaseNotes: release.body?.slice(0, 400),
+        error: hasUpdate ? undefined : (latestVersion === this.currentVersion ? undefined : '当前版本较新')
       }
 
-      logger.info(`检查完成: 当前 ${this.currentVersion}, 最新 ${latestVersion}, 有更新: ${result.hasUpdate}`)
+      logger.info(`检查完成: 当前 ${this.currentVersion}, 最新 ${latestVersion}, 有更新: ${hasUpdate}`)
       this._state = 'idle'
       this.emit('stateChanged', this._state)
       return result
@@ -297,8 +152,9 @@ export class SnowlumaUpdater extends EventEmitter {
       const msg = err instanceof Error ? err.message : String(err)
       logger.error('检查更新失败:', msg)
       this._state = 'error'
+      this.lastError = `检查失败: ${msg}`
       this.emit('stateChanged', this._state)
-      return { hasUpdate: false, currentVersion: this.currentVersion, latestVersion: '未知' }
+      return { hasUpdate: false, currentVersion: this.currentVersion, latestVersion: '未知', error: this.lastError }
     }
   }
 
@@ -310,6 +166,9 @@ export class SnowlumaUpdater extends EventEmitter {
     const dir = this.manager.getCurrentDir()
     if (!dir) {
       logger.error('SnowLuma 目录未设置')
+      this.lastError = 'SnowLuma 目录未设置'
+      this._state = 'error'
+      this.emit('stateChanged', this._state)
       return false
     }
 
@@ -320,17 +179,23 @@ export class SnowlumaUpdater extends EventEmitter {
 
     // 下载
     this._state = 'downloading'
+    this.lastError = undefined
     this.emit('stateChanged', this._state)
     logger.info(`正在下载: ${downloadUrl}`)
 
     const zipPath = path.join(this.tempDir, 'snowluma-update.zip')
     try {
-      await downloadFile(downloadUrl, zipPath, this.proxy)
-      logger.info(`下载完成: ${zipPath}`)
+      const res = await fetch(downloadUrl, { signal: AbortSignal.timeout(300000) }) // 5 分钟超时
+      if (!res.ok) throw new Error(`下载失败: ${res.status} ${res.statusText}`)
+
+      const buffer = await res.arrayBuffer()
+      fs.writeFileSync(zipPath, Buffer.from(buffer))
+      logger.info(`下载完成: ${zipPath} (${(buffer.byteLength / 1024 / 1024).toFixed(2)} MB)`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       logger.error('下载失败:', msg)
       this._state = 'error'
+      this.lastError = `下载失败: ${msg}`
       this.emit('stateChanged', this._state)
       return false
     }
@@ -353,6 +218,7 @@ export class SnowlumaUpdater extends EventEmitter {
       const msg = err instanceof Error ? err.message : String(err)
       logger.error('解压失败:', msg)
       this._state = 'error'
+      this.lastError = `解压失败: ${msg}`
       this.emit('stateChanged', this._state)
       return false
     }
@@ -388,6 +254,7 @@ export class SnowlumaUpdater extends EventEmitter {
 
       logger.info(`SnowLuma 已更新至 v${this.currentVersion}`)
       this._state = 'idle'
+      this.lastError = undefined
       this.emit('stateChanged', this._state)
       this.emit('updateComplete', this.currentVersion)
 
@@ -405,9 +272,20 @@ export class SnowlumaUpdater extends EventEmitter {
       const msg = err instanceof Error ? err.message : String(err)
       logger.error('安装更新失败:', msg)
       this._state = 'error'
+      this.lastError = `安装失败: ${msg}`
       this.emit('stateChanged', this._state)
       return false
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 重置错误状态
+  // ---------------------------------------------------------------------------
+
+  reset() {
+    this._state = 'idle'
+    this.lastError = undefined
+    this.emit('stateChanged', this._state)
   }
 
   // ---------------------------------------------------------------------------
