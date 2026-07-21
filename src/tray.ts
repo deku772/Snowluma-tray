@@ -1,8 +1,9 @@
-import { Tray, Menu, nativeImage, shell, app, Notification } from 'electron'
-import { autoUpdater } from 'electron-updater'
+import { Tray, Menu, nativeImage, shell, app, Notification, dialog } from 'electron'
 import path from 'node:path'
+import fs from 'node:fs'
 import { logger } from './logger'
 import { SnowlumaManager, SnowlumaState } from './snowluma-manager'
+import { SnowlumaUpdater } from './snowluma-updater'
 
 // ---------------------------------------------------------------------------
 // 图标路径
@@ -18,13 +19,31 @@ export class TrayManager {
   private tray: Tray | null = null
   private mainWindow: Electron.BrowserWindow | null = null
   private snowlumaManager: SnowlumaManager
+  private snowlumaUpdater: SnowlumaUpdater
   private trayAppVersion = app.getVersion()
-  private updateAvailable = false
-  private updateVersion = ''
+  private snowlumaUpdateAvailable = false
+  private snowlumaUpdateVersion = ''
+  private proxy: string | undefined
 
   constructor(snowlumaManager: SnowlumaManager) {
     this.snowlumaManager = snowlumaManager
-    this.setupAutoUpdater()
+    this.snowlumaUpdater = new SnowlumaUpdater(snowlumaManager)
+    this.loadProxyConfig()
+    this.setupSnowlumaUpdater()
+  }
+
+  // ---------------------------------------------------------------------------
+  // 代理配置
+  // ---------------------------------------------------------------------------
+
+  private loadProxyConfig() {
+    try {
+      const configPath = path.join(app.getPath('userData'), 'config.json')
+      if (fs.existsSync(configPath)) {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+        this.proxy = config.proxy
+      }
+    } catch { /* ignore */ }
   }
 
   // ---------------------------------------------------------------------------
@@ -62,6 +81,17 @@ export class TrayManager {
       this.buildMenu()
     })
 
+    // 更新器状态变化
+    this.snowlumaUpdater.on('stateChanged', () => {
+      this.buildMenu()
+    })
+
+    this.snowlumaUpdater.on('updateComplete', (version: string) => {
+      this.snowlumaUpdateAvailable = false
+      this.buildMenu()
+      this.notify('SnowLuma 更新完成', `已更新至 v${version}`)
+    })
+
     logger.info('托盘图标已创建')
   }
 
@@ -76,6 +106,7 @@ export class TrayManager {
     const lm = this.snowlumaManager
     const snowlumaVer = lm.snowlumaVersion
     const snowlumaDir = lm.getCurrentDir() ?? ''
+    const updaterState = this.snowlumaUpdater.state
 
     const stateLabel: Record<SnowlumaState, string> = {
       stopped: '❌ 已停止',
@@ -85,15 +116,14 @@ export class TrayManager {
       error: '⚠️ 异常',
     }
 
-    const versionSection: Electron.MenuItemConstructorOptions[] = [
-      { label: `  托盘版本: v${this.trayAppVersion}`, enabled: false },
-      { label: `  SnowLuma: v${snowlumaVer}`, enabled: false },
-      ...(snowlumaDir ? [{ label: `  目录: ${snowlumaDir}`, enabled: false }] : []),
-    ]
-
-    const updateLabel = this.updateAvailable
-      ? `📥 下载更新 v${this.updateVersion}`
-      : '📥 检查更新'
+    const updaterLabel: Record<string, string> = {
+      idle: this.snowlumaUpdateAvailable ? `📥 下载更新 v${this.snowlumaUpdateVersion}` : '📥 检查更新',
+      checking: '🔍 检查中...',
+      downloading: '⬇️ 下载中...',
+      extracting: '📦 解压中...',
+      installing: '⚙️ 安装中...',
+      error: '❌ 更新失败',
+    }
 
     const contextMenu = Menu.buildFromTemplate([
       // 标题行：版本 + 状态
@@ -136,12 +166,21 @@ export class TrayManager {
       { type: 'separator' },
 
       // 版本信息（不可点击）
-      ...versionSection,
+      { label: `  托盘版本: v${this.trayAppVersion}`, enabled: false },
+      { label: `  SnowLuma: v${snowlumaVer}`, enabled: false },
+      ...(snowlumaDir ? [{ label: `  目录: ${snowlumaDir}`, enabled: false }] : []),
 
-      // OTA 更新
+      // SnowLuma OTA 更新
       {
-        label: updateLabel,
-        click: () => this.checkForUpdates(),
+        label: updaterLabel[updaterState] || '📥 检查更新',
+        enabled: updaterState === 'idle',
+        click: () => this.checkSnowlumaUpdates(),
+      },
+
+      // 代理设置
+      {
+        label: this.proxy ? '🔧 设置代理 (当前: 已设置)' : '🔧 设置代理',
+        click: () => this.showProxyDialog(),
       },
 
       { type: 'separator' },
@@ -229,65 +268,72 @@ export class TrayManager {
   }
 
   // ---------------------------------------------------------------------------
-  // OTA 更新
+  // SnowLuma 更新
   // ---------------------------------------------------------------------------
 
-  private setupAutoUpdater() {
-    autoUpdater.autoDownload = false
-    autoUpdater.autoInstallOnAppQuit = true
-
-    autoUpdater.on('checking-for-update', () => {
-      logger.info('正在检查更新...')
-    })
-
-    autoUpdater.on('update-available', (info) => {
-      logger.info(`发现新版本: v${info.version}`)
-      this.updateAvailable = true
-      this.updateVersion = info.version
-      this.buildMenu()
-      this.notify('发现新版本', `v${info.version} 可用，点击「下载更新」安装`)
-    })
-
-    autoUpdater.on('update-not-available', () => {
-      logger.info('当前已是最新版本')
-      this.updateAvailable = false
-      this.buildMenu()
-    })
-
-    autoUpdater.on('download-progress', (progress) => {
-      logger.info(`下载进度: ${progress.percent.toFixed(1)}%`)
-    })
-
-    autoUpdater.on('update-downloaded', (info) => {
-      logger.info(`更新已下载: v${info.version}，退出后将自动安装`)
-      this.notify('更新已就绪', `v${info.version} 下载完成，退出后自动安装`)
-      this.buildMenu()
-    })
-
-    autoUpdater.on('error', (err) => {
-      // 未发布版本：缺少 app-update.yml，无需上报
-      const raw = String(err ?? '')
-      if (raw.includes('app-update.yml')) return
-      logger.error('OTA 更新错误:', raw)
-    })
+  private setupSnowlumaUpdater() {
+    // 已在构造函数中创建
   }
 
-  /** 菜单触发检查更新 */
-  async checkForUpdates() {
-    try {
-      logger.info('用户点击：检查更新')
-      const result = await autoUpdater.checkForUpdates()
-      if (!result) {
-        this.notify('已是最新', `当前 v${app.getVersion()} 无需更新`)
+  /** 检查 SnowLuma 更新 */
+  async checkSnowlumaUpdates() {
+    const result = await this.snowlumaUpdater.checkForUpdate()
+
+    if (result.hasUpdate && result.downloadUrl) {
+      this.snowlumaUpdateAvailable = true
+      this.snowlumaUpdateVersion = result.latestVersion
+      this.buildMenu()
+
+      // 弹窗询问是否下载
+      const choice = dialog.showMessageBoxSync(this.mainWindow!, {
+        type: 'info',
+        buttons: ['立即下载', '稍后提醒'],
+        defaultId: 0,
+        title: '发现新版本',
+        message: `SnowLuma v${result.latestVersion} 可用`,
+        detail: `当前版本: v${result.currentVersion}\n\n${result.releaseNotes?.split('\n').slice(0, 5).join('\n') || '查看完整更新日志请访问 GitHub'}`,
+      })
+
+      if (choice === 0) {
+        // 用户选择下载
+        this.notify('开始下载', `正在下载 SnowLuma v${result.latestVersion}...`)
+        await this.snowlumaUpdater.downloadAndInstall(result.downloadUrl)
       }
-    } catch (err: unknown) {
-      const raw = String(err ?? '')
-      if (raw.includes('app-update.yml')) {
-        this.notify('未配置更新', `发布后可在此检查更新`)
-        return
-      }
-      logger.error('检查更新失败:', raw)
-      this.notify('检查失败', '无法连接更新服务器')
+    } else if (!result.hasUpdate) {
+      this.notify('已是最新', `SnowLuma v${result.currentVersion} 无需更新`)
+    } else {
+      this.notify('检查失败', '无法获取更新信息，请检查网络连接')
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 代理设置
+  // ---------------------------------------------------------------------------
+
+  private showProxyDialog() {
+    const currentProxy = this.proxy || ''
+
+    // 使用简单的输入对话框（通过 Electron prompt 或自定义窗口）
+    // 这里简化为设置固定代理 127.0.0.1:7890
+    const choice = dialog.showMessageBoxSync(this.mainWindow!, {
+      type: 'question',
+      buttons: ['设置 127.0.0.1:7890', '清除代理', '取消'],
+      defaultId: 0,
+      title: '代理设置',
+      message: '当前代理: ' + (currentProxy || '未设置'),
+      detail: '设置代理以访问 GitHub（国内网络需要）',
+    })
+
+    if (choice === 0) {
+      this.proxy = 'http://127.0.0.1:7890'
+      this.snowlumaUpdater.setProxy(this.proxy)
+      this.buildMenu()
+      this.notify('代理已设置', '127.0.0.1:7890')
+    } else if (choice === 1) {
+      this.proxy = undefined
+      this.snowlumaUpdater.setProxy(undefined)
+      this.buildMenu()
+      this.notify('代理已清除', '将使用直连')
     }
   }
 
