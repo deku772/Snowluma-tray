@@ -281,7 +281,7 @@ export class SnowlumaManager extends EventEmitter {
       try {
         // 先尝试 SIGTERM
         process.kill(pid, 'SIGTERM')
-        // 等待最多 5 秒后强制 kill
+        // 等待最多 5 秒后强制 kill，然后确保状态转换到 stopped
         setTimeout(() => {
           try {
             process.kill(pid, 0) // still alive?
@@ -290,24 +290,45 @@ export class SnowlumaManager extends EventEmitter {
           } catch {
             // 进程已退出
           }
+          // 如果 exit 事件还没触发，手动完成状态转换
+          if (this._state === 'stopping') {
+            this.process = null
+            this._state = 'stopped'
+            this.emitState()
+          }
         }, 5000)
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
         logger.warn('发送终止信号失败:', msg)
+        // 发送信号失败，直接标记为已停止
+        this.process = null
+        this._state = 'stopped'
+        this.emitState()
       }
+    } else {
+      // 没有进程，直接标记为已停止
+      this._state = 'stopped'
+      this.emitState()
     }
 
-    // 立即设置为 stopped（等待 exit 事件清理 process 引用）
-    this._state = 'stopped'
     return true
   }
 
   restart(): boolean {
     logger.info('执行重启操作')
-    const wasRunning = this._state === 'running'
-    this.stop()
-    if (wasRunning || this._state === 'stopped') {
-      setTimeout(() => this.start(), 1000)
+    if (this._state === 'running' || this._state === 'error') {
+      this.stop()
+      // 等待停止完成后再启动
+      const waitForStop = () => {
+        if (this._state === 'stopped') {
+          this.start()
+        } else if (this._state === 'stopping') {
+          setTimeout(waitForStop, 200)
+        }
+      }
+      setTimeout(waitForStop, 500)
+    } else if (this._state === 'stopped') {
+      this.start()
     }
     return true
   }
@@ -317,7 +338,14 @@ export class SnowlumaManager extends EventEmitter {
   // ---------------------------------------------------------------------------
 
   private handleExit(code: number) {
-    if (this._state === 'stopping' || this._state === 'stopped') {
+    if (this._state === 'stopping') {
+      this.process = null
+      this._state = 'stopped'
+      this.emitState()
+      return
+    }
+
+    if (this._state === 'stopped') {
       this.process = null
       return
     }

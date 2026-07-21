@@ -9,7 +9,7 @@ import { SnowlumaUpdater } from './snowluma-updater'
 // 图标路径
 // ---------------------------------------------------------------------------
 
-const getIconPath = () => path.join(__dirname, '..', 'assets', 'icon.png')
+const getIconPath = () => path.join(__dirname, '..', 'assets', 'icon.ico')
 
 // ---------------------------------------------------------------------------
 // 托盘管理器

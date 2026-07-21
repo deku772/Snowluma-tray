@@ -31,9 +31,12 @@
     },
     "files": [
       "dist/**/*",
-      "assets/**/*",
+      "assets/icon.ico",
+      "assets/icon.png",
+      "assets/icon-*.png",
       "*.html"
     ],
+    "afterPack": "./afterPack.js",
     "win": {
       "target": [
         {
@@ -41,7 +44,7 @@
           "arch": ["x64"]
         }
       ],
-      "icon": "assets/icon.png",
+      "icon": "assets/icon.ico",
       "signAndEditExecutable": false
     },
     "portable": {
