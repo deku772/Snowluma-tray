@@ -4,7 +4,9 @@ import log from 'electron-log'
 import path from 'node:path'
 import { SnowlumaManager } from './snowluma-manager'
 import { TrayManager } from './tray'
+import { GuideManager } from './guide-manager'
 import { logger } from './logger'
+import fs from 'node:fs'
 
 // ---------------------------------------------------------------------------
 // 全局状态
@@ -21,6 +23,32 @@ if (!gotLock) {
 let mainWindow: BrowserWindow | null = null
 let snowlumaManager: SnowlumaManager
 let trayManager: TrayManager
+let guideManager: GuideManager
+
+// 检测是否已配置（有 config.json 且有目录）
+function isConfigured(): boolean {
+  const configPath = path.join(app.getPath('userData'), 'config.json')
+  try {
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      if (config.snowlumaDir && fs.existsSync(path.join(config.snowlumaDir, 'index.mjs'))) {
+        return true
+      }
+    }
+  } catch { /* ignore */ }
+  return false
+}
+
+// 检测是否有可用的默认目录（用于自动填充）
+function detectDefaultDir(): string | null {
+  const defaultDirs = ['D:\\snowluma', 'D:\\SnowLuma']
+  for (const dir of defaultDirs) {
+    if (fs.existsSync(path.join(dir, 'index.mjs')) && fs.existsSync(path.join(dir, 'node.exe'))) {
+      return dir
+    }
+  }
+  return null
+}
 
 // ---------------------------------------------------------------------------
 // 窗口创建
@@ -152,10 +180,21 @@ app.whenReady().then(() => {
   // 初始化 OTA 自动更新（仅设置 logger，不自动检查）
   autoUpdater.logger = log
 
-  // 自动检测并启动 SnowLuma
-  setTimeout(() => {
-    snowlumaManager.detectAndStart()
-  }, 500)
+  // 检测是否首次使用
+  if (!isConfigured()) {
+    // 首次使用，显示引导
+    logger.info('首次使用，显示引导窗口')
+    guideManager = new GuideManager(snowlumaManager)
+    guideManager.show((dir) => {
+      logger.info('引导完成，目录:', dir)
+    })
+  } else {
+    // 已有配置，直接启动
+    logger.info('检测到已有配置，直接启动')
+    setTimeout(() => {
+      snowlumaManager.detectAndStart()
+    }, 500)
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

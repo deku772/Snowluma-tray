@@ -31,7 +31,8 @@
     },
     "files": [
       "dist/**/*",
-      "assets/**/*"
+      "assets/**/*",
+      "*.html"
     ],
     "win": {
       "target": [

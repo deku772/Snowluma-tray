@@ -270,25 +270,25 @@ export class SnowlumaManager extends EventEmitter {
     this._state = 'stopping'
     this.emitState()
 
+    // 清除重启定时器
     if (this.restartTimer) {
       clearTimeout(this.restartTimer)
       this.restartTimer = null
     }
 
-    if (this.process?.pid) {
+    const pid = this.process?.pid
+    if (pid) {
       try {
         // 先尝试 SIGTERM
-        process.kill(this.process.pid, 'SIGTERM')
+        process.kill(pid, 'SIGTERM')
         // 等待最多 5 秒后强制 kill
         setTimeout(() => {
-          if (this.process?.pid) {
-            try {
-              process.kill(this.process.pid, 0) // still alive
-              process.kill(this.process.pid, 'SIGKILL')
-              logger.info('已强制终止 SnowLuma 进程')
-            } catch {
-              // 进程已退出
-            }
+          try {
+            process.kill(pid, 0) // still alive?
+            process.kill(pid, 'SIGKILL')
+            logger.info('已强制终止 SnowLuma 进程')
+          } catch {
+            // 进程已退出
           }
         }, 5000)
       } catch (err: unknown) {
@@ -297,9 +297,8 @@ export class SnowlumaManager extends EventEmitter {
       }
     }
 
+    // 立即设置为 stopped（等待 exit 事件清理 process 引用）
     this._state = 'stopped'
-    this.process = null
-    this.emitState()
     return true
   }
 

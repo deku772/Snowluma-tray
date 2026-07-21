@@ -152,9 +152,11 @@ export class TrayManager {
       { type: 'separator' },
 
       // 版本信息（不可点击）
-      { label: `  托盘版本: v${this.trayAppVersion}`, enabled: false },
+      { label: `  托盘: v${this.trayAppVersion}`, enabled: false },
       { label: `  SnowLuma: v${snowlumaVer}`, enabled: false },
       ...(snowlumaDir ? [{ label: `  目录: ${snowlumaDir}`, enabled: false }] : []),
+
+      { type: 'separator' },
 
       // SnowLuma OTA 更新
       {
@@ -172,6 +174,16 @@ export class TrayManager {
       ...(updaterState === 'error' && updaterError ? [
         { label: `  错误: ${updaterError.slice(0, 50)}${updaterError.length > 50 ? '...' : ''}`, enabled: false }
       ] : []),
+
+      // 托盘更新提醒
+      {
+        label: '📦 托盘更新（需手动下载）',
+        enabled: true,
+        click: () => {
+          this.notify('托盘更新', `当前托盘 v${this.trayAppVersion}，请访问 GitHub 下载最新版本`)
+          shell.openExternal('https://github.com/deku772/Snowluma-tray/releases/latest').catch(() => {})
+        },
+      },
 
       { type: 'separator' },
 

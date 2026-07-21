@@ -22,4 +22,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   // 获取版本
   getVersion: () => ipcRenderer.invoke('app:getVersion'),
+
+  // ============================================
+  // 引导页面 API
+  // ============================================
+
+  // 获取托盘版本
+  getTrayVersion: () => ipcRenderer.invoke('guide:getTrayVersion'),
+
+  // 选择目录
+  selectDirectory: () => ipcRenderer.invoke('guide:selectDirectory'),
+
+  // 获取最新 SnowLuma 版本
+  getLatestSnowluma: () => ipcRenderer.invoke('guide:getLatestSnowluma'),
+
+  // 下载 SnowLuma（带进度回调）
+  downloadSnowluma: (url: string, onProgress: (pct: number) => void) => {
+    ipcRenderer.on('guide:downloadProgress', (_event, pct) => onProgress(pct))
+    return ipcRenderer.invoke('guide:downloadSnowluma', url)
+  },
+
+  // 解压
+  extractSnowluma: () => ipcRenderer.invoke('guide:extractSnowluma'),
+
+  // 设置目录并验证
+  setSnowlumaDir: (dir: string) => ipcRenderer.invoke('guide:setSnowlumaDir', dir),
+
+  // 启动 SnowLuma
+  startSnowluma: (dir: string) => ipcRenderer.invoke('guide:startSnowluma', dir),
 })
