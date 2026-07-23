@@ -1,14 +1,10 @@
 import { BrowserWindow, ipcMain, dialog, app, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
-import https from 'node:https'
-import http from 'node:http'
-import { createWriteStream } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
-import { createGunzip } from 'node:zlib'
-import { Readable } from 'node:stream'
 import { logger } from './logger'
 import { SnowlumaManager } from './snowluma-manager'
+import { githubApiGet } from './github-mirror'
 
 // ---------------------------------------------------------------------------
 // 类型定义
@@ -69,15 +65,7 @@ export class GuideManager {
     // 获取最新版本
     ipcMain.handle('guide:getLatestSnowluma', async () => {
       try {
-        const response = await fetch('https://api.github.com/repos/SnowLuma/SnowLuma/releases/latest', {
-          headers: { 'User-Agent': 'SnowLumaTray' },
-        })
-
-        if (!response.ok) {
-          throw new Error(`GitHub API 返回 ${response.status}`)
-        }
-
-        const data = await response.json() as GitHubRelease
+        const data = await githubApiGet<GitHubRelease>('/repos/SnowLuma/SnowLuma/releases/latest')
         const version = data.tag_name.replace(/^v/, '')
 
         // 查找 Windows zip 资源
@@ -264,72 +252,67 @@ export class GuideManager {
   // ---------------------------------------------------------------------------
 
   private async downloadFile(url: string, destPath: string, onProgress: (pct: number) => void): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const protocol = url.startsWith('https') ? https : http
+    logger.info('开始下载:', url)
 
-      logger.info('开始下载:', url)
+    // 尝试直连 + 镜像竞速，取第一个成功的
+    const DOWNLOAD_MIRRORS: string[] = [
+      '',  // 直连
+      'https://ghproxy.net',
+      'https://mirror.ghproxy.com',
+      'https://gh-proxy.com',
+      'https://ghfast.top',
+    ]
 
-      const req = protocol.get(url, {
-        headers: {
-          'User-Agent': 'SnowLumaTray',
-          'Accept': 'application/octet-stream',
-        },
-      }, (response) => {
-        // 处理重定向
-        if (response.statusCode === 301 || response.statusCode === 302) {
-          const redirectUrl = response.headers.location
-          if (redirectUrl) {
-            logger.info('重定向到:', redirectUrl)
-            this.downloadFile(redirectUrl, destPath, onProgress).then(resolve).catch(reject)
-            return
-          }
-        }
+    // 每个请求独立 controller，避免赢家被输家 abort
+    const controllers = DOWNLOAD_MIRRORS.map(() => new AbortController())
+    const timeout = setTimeout(() => {
+      controllers.forEach(c => c.abort())
+    }, 300000) // 5 分钟
 
-        if (response.statusCode !== 200) {
-          reject(new Error(`下载失败: HTTP ${response.statusCode}`))
-          return
-        }
+    const urls = DOWNLOAD_MIRRORS.map((prefix) => prefix ? `${prefix}/${url}` : url)
 
-        const totalSize = parseInt(response.headers['content-length'] || '0', 10)
-        let downloadedSize = 0
-
-        const file = createWriteStream(destPath)
-
-        response.on('data', (chunk: Buffer) => {
-          downloadedSize += chunk.length
-          if (totalSize > 0) {
-            const pct = (downloadedSize / totalSize) * 100
-            onProgress(pct)
-          }
-        })
-
-        response.pipe(file)
-
-        file.on('finish', () => {
-          file.close()
-          logger.info('下载完成:', destPath)
-          resolve()
-        })
-
-        response.on('error', (err) => {
-          file.close()
-          fs.unlinkSync(destPath)
-          reject(err)
-        })
+    const tasks = urls.map(async (mirrorUrl, i) => {
+      const res = await fetch(mirrorUrl, {
+        headers: { 'User-Agent': 'SnowLumaTray' },
+        signal: controllers[i].signal,
       })
-
-      req.on('error', (err) => {
-        reject(new Error(`请求失败: ${err.message}`))
-      })
-
-      req.setTimeout(60000, () => {
-        req.destroy()
-        if (fs.existsSync(destPath)) {
-          fs.unlinkSync(destPath)
-        }
-        reject(new Error('下载超时（60秒）'))
-      })
+      if (!res.ok) throw new Error(`HTTP ${res.status} @ ${mirrorUrl}`)
+      return { res, mirrorUrl, index: i }
     })
+
+    try {
+      const { res, mirrorUrl, index } = await Promise.any(tasks)
+      logger.info(`下载连接成功 via ${mirrorUrl}`)
+
+      // abort 输家，保留赢家
+      controllers.forEach((c, i) => {
+        if (i !== index) c.abort()
+      })
+
+      const totalSize = parseInt(res.headers.get('content-length') || '0', 10)
+      let downloadedSize = 0
+
+      // 流式写入
+      const { Readable } = await import('node:stream')
+      const { createWriteStream } = await import('node:fs')
+      const file = createWriteStream(destPath)
+      const stream = Readable.fromWeb(res.body as any)
+
+      stream.on('data', (chunk: Buffer) => {
+        downloadedSize += chunk.length
+        if (totalSize > 0) {
+          onProgress((downloadedSize / totalSize) * 100)
+        }
+      })
+
+      await pipeline(stream, file)
+      logger.info('下载完成:', destPath)
+    } catch (aggregate) {
+      const errors = (aggregate as AggregateError)?.errors?.map((e: Error) => e.message) ?? [String(aggregate)]
+      throw new Error(`下载失败（全部镜像）: ${errors.join(' | ')}`)
+    } finally {
+      clearTimeout(timeout)
+    }
   }
 
   // ---------------------------------------------------------------------------

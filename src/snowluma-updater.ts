@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events'
 import { app, Notification } from 'electron'
 import { logger } from './logger'
 import { SnowlumaManager } from './snowluma-manager'
+import { githubApiGet, githubDownload } from './github-mirror'
 
 // ---------------------------------------------------------------------------
 // 类型定义
@@ -109,23 +110,9 @@ export class SnowlumaUpdater extends EventEmitter {
       return { hasUpdate: false, currentVersion: '未知', latestVersion: '未知', error: this.lastError }
     }
 
-    // 获取 GitHub 最新 Release
+    // 获取 GitHub 最新 Release（自动尝试镜像）
     try {
-      const apiUrl = 'https://api.github.com/repos/SnowLuma/SnowLuma/releases/latest'
-      const res = await fetch(apiUrl, {
-        headers: {
-          'Accept': 'application/vnd.github+json',
-          'User-Agent': 'SnowLuma-Tray/1.1.0',
-          'X-GitHub-Api-Version': '2022-11-28',
-        },
-        signal: AbortSignal.timeout(15000),
-      })
-
-      if (!res.ok) {
-        throw new Error(`GitHub API 错误: ${res.status} ${res.statusText}`)
-      }
-
-      const release: GitHubRelease = await res.json()
+      const release = await githubApiGet<GitHubRelease>('/repos/SnowLuma/SnowLuma/releases/latest')
       const latestVersion = release.tag_name.replace(/^v/, '')
 
       // 找到 Windows x64 完整版 zip
@@ -185,12 +172,10 @@ export class SnowlumaUpdater extends EventEmitter {
 
     const zipPath = path.join(this.tempDir, 'snowluma-update.zip')
     try {
-      const res = await fetch(downloadUrl, { signal: AbortSignal.timeout(300000) }) // 5 分钟超时
-      if (!res.ok) throw new Error(`下载失败: ${res.status} ${res.statusText}`)
-
-      const buffer = await res.arrayBuffer()
-      fs.writeFileSync(zipPath, Buffer.from(buffer))
-      logger.info(`下载完成: ${zipPath} (${(buffer.byteLength / 1024 / 1024).toFixed(2)} MB)`)
+      const { size } = await githubDownload(downloadUrl, zipPath, (pct) => {
+        this.emit('downloadProgress', pct)
+      }, 300000) // 5 分钟超时
+      logger.info(`下载完成: ${zipPath} (${(size / 1024 / 1024).toFixed(2)} MB)`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       logger.error('下载失败:', msg)

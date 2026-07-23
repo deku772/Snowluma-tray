@@ -23,6 +23,7 @@ export class TrayManager {
   private trayAppVersion = app.getVersion()
   private snowlumaUpdateAvailable = false
   private snowlumaUpdateVersion = ''
+  private downloadProgress = 0
   private lastCheckResult?: { hasUpdate: boolean; latestVersion: string; downloadUrl?: string; releaseNotes?: string }
 
   constructor(snowlumaManager: SnowlumaManager) {
@@ -71,8 +72,26 @@ export class TrayManager {
       this.buildMenu()
     })
 
+    // 下载进度
+    this.snowlumaUpdater.on('downloadProgress', (pct: number) => {
+      const rounded = Math.round(pct)
+      if (rounded !== this.downloadProgress) {
+        this.downloadProgress = rounded
+        this.buildMenu()
+      }
+    })
+
+    // 下载开始时重置进度
+    this.snowlumaUpdater.on('stateChanged', (state: string) => {
+      if (state === 'downloading') {
+        this.downloadProgress = 0
+      }
+    })
+
     this.snowlumaUpdater.on('updateComplete', (version: string) => {
       this.snowlumaUpdateAvailable = false
+      this.downloadProgress = 0
+      this.snowlumaManager.refreshVersion()
       this.buildMenu()
       this.notify('SnowLuma 更新完成', `已更新至 v${version}`)
     })
@@ -105,7 +124,7 @@ export class TrayManager {
     const updaterLabel: Record<string, string> = {
       idle: this.snowlumaUpdateAvailable ? `📥 下载更新 v${this.snowlumaUpdateVersion}` : '📥 检查更新',
       checking: '🔍 检查中...',
-      downloading: '⬇️ 下载中...',
+      downloading: `⬇️ 下载中... ${this.downloadProgress}%`,
       extracting: '📦 解压中...',
       installing: '⚙️ 安装中...',
       error: `❌ 更新失败（点击重试）`,

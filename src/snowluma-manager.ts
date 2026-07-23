@@ -159,6 +159,15 @@ export class SnowlumaManager extends EventEmitter {
     return this.snowlumaDir
   }
 
+  /** 重新读取 SnowLuma 版本号（更新后调用） */
+  refreshVersion(): string {
+    if (this.snowlumaDir) {
+      this._snowlumaVersion = readSnowlumaVersion(this.snowlumaDir)
+      logger.info(`SnowLuma 版本已刷新: ${this._snowlumaVersion}`)
+    }
+    return this._snowlumaVersion
+  }
+
   /** 设置目录并保存 */
   setDir(dir: string) {
     if (!isValidSnowlumaDir(dir)) {
